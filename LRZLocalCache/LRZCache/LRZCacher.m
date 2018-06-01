@@ -15,9 +15,13 @@
 
 
 @interface LRZCacher()
+/*写入线程*/
 @property (nonatomic,strong) dispatch_queue_t ioQueue_busy;
+/*存放每个uid + key 的数据长度【本身用NSUserDefaults+LRZ_SIZE_OF_KEY_KEY】存放*/
 @property (nonatomic,strong) NSMutableDictionary *sizeOfKey;
-@property (nonatomic,strong) NSMutableDictionary *objOfKey;//存储经常交互的数据,  通过key索引
+/*存储经常交互的数据,内存缓存 通过uid + key索引*/
+@property (nonatomic,strong) NSMutableDictionary *objOfKey;
+/*存放每个uid + key 的数据对应的是否是归档类型【本身用NSUserDefaults+LRZ_ARCHIVE_TYPE_OF_KEY】存放*/
 @property (nonatomic,strong) NSMutableDictionary *archiveTypeOfKey;
 @end
 
@@ -124,6 +128,7 @@
         id memoryObj = nil;
         NSMutableData *data = nil;
         if (!needArchive) {
+            //NSArray类型需要归档
             if (![obj isKindOfClass:[NSDictionary class]] && [obj isKindOfClass:[NSArray class]]) {
                 if (block) {
                     block(weakSelf,CacheErrorBadInJsonData);
@@ -140,7 +145,7 @@
             data = [[NSMutableData alloc] initWithData:middleData];
             memoryObj = [NSJSONSerialization JSONObjectWithData:data options:kNilOptions error:nil];
         }
-        else {
+        else {//做归档操作
             NSData* middleData = [NSKeyedArchiver archivedDataWithRootObject:obj];
             if (!middleData) {
                 if (block) {
@@ -152,6 +157,7 @@
             memoryObj = [NSKeyedUnarchiver unarchiveObjectWithData:data];
         }
         
+        //是否写入文件判断
         NSString *keyOfUidAndKey = [self memoryKeyOfKey:key userId:uid];
         BOOL needWriteFile = 0;
         NSString *folderPath = [self folderPath:uid];
@@ -160,9 +166,11 @@
         [self localStoreArchiveTypeOfKey:self key:LRZ_ARCHIVE_TYPE_OF_KEY];
         
         if (weakSelf.sizeOfKey[keyOfUidAndKey] != nil) {
+            //更新之前的内容
+            if (memoryObj) {[weakSelf.objOfKey setObject:memoryObj forKey:keyOfUidAndKey];}
             if ([weakSelf.sizeOfKey[keyOfUidAndKey] longValue] != data.length) {
+                //本次存放的keyOfUidAndKey 内容和之前的不一致【说明数据发生了变化】
                 needWriteFile = YES;
-                [weakSelf.objOfKey setObject:memoryObj forKey:keyOfUidAndKey];
                 weakSelf.totalSize += data.length-[weakSelf.sizeOfKey[keyOfUidAndKey] longValue];
                 [weakSelf.sizeOfKey setValue:[NSNumber numberWithLong:data.length] forKey:keyOfUidAndKey];
                 [weakSelf localStoreSizeOfKey:weakSelf key:LRZ_SIZE_OF_KEY_KEY];
@@ -172,6 +180,7 @@
             }
         }
         else {
+            //之前的keyOfUidAndKey没有内容【直接写入文件】
             needWriteFile = YES;
             weakSelf.totalSize += data.length;
             [weakSelf.objOfKey setObject:memoryObj forKey:keyOfUidAndKey];
@@ -179,6 +188,7 @@
             [weakSelf localStoreSizeOfKey:weakSelf key:LRZ_SIZE_OF_KEY_KEY];
         }
         
+        //写入操作
         if (needWriteFile) {
             NSFileManager *fm = [NSFileManager defaultManager];
             if (![fm fileExistsAtPath:folderPath isDirectory:NULL]) {
